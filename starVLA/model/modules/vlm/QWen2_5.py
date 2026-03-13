@@ -97,6 +97,9 @@ class _QWen_VL_Interface(nn.Module):
         self.processor = processor
         self.config = config
 
+        # align with QwenGR00T expectation: model.config.hidden_size
+        self.model.config.hidden_size = self.model.config.text_config.hidden_size
+
         self._ACTION_TOKEN_MIN = _ACTION_TOKEN_MIN
         self._ACTION_TOKEN_MAX = _ACTION_TOKEN_MAX
 
