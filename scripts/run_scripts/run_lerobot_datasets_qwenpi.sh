@@ -1,31 +1,53 @@
+#!/usr/bin/env bash
+# =============================================================================
+# starVLA 训练启动脚本（train_starvla.py）
+# - 作用：使用 accelerate + DeepSpeed 启动训练。
+# - 注意：仅在“Paths to edit”区域修改变量值（模型、数据路径、run id 等）。
+# =============================================================================
+
+# -------------------------
+# 通信 / NCCL 设置（按硬件/网络环境调整）
+# -------------------------
 export NCCL_SOCKET_IFNAME=bond0
 export NCCL_IB_HCA=mlx5_2,mlx5_3
 
+# 保证在通信异常或同步操作时的可见性与超时控制
 export NCCL_BLOCKING_WAIT=1
 export NCCL_ASYNC_ERROR_HANDLING=1
-export NCCL_TIMEOUT=1000  # timeout set to 1 hour (unit: seconds)
+export NCCL_TIMEOUT=1000  # 单位：秒（此处设为 1 小时）
 
 
-# === Please modify the following paths according to your environment ===
-###########################################################################################
+# -------------------------
+# 禁用 W&B 自动在线记录（按需启用）
+# -------------------------
+export WANDB_MODE=disabled
 
+
+# -------------------------
+# Paths to edit / 运行配置（根据实际环境修改）
+# -------------------------
 Framework_name=QwenPI
 base_vlm=StarVLA/Qwen2.5-VL-3B-Instruct-Action
+action_input_dim=2048
 DIT_TYPE="DiT-B"
 oxe_data_root=playground/Datasets/OXE_LEROBOT
 data_mix=bridge_rt_1
 run_root_dir=./playground/Checkpoints
 run_id=1011_starvla_qwenpi
-export action_input_dim=2048
-###########################################################################################
 
 
+# -------------------------
+# 输出目录准备（创建目录并备份本脚本）
+# -------------------------
 output_dir=${run_root_dir}/${run_id}
 mkdir -p ${output_dir}
-# mv this script to the output dir
 cp $0 ${output_dir}/
 
 
+# -------------------------
+# 启动：accelerate + DeepSpeed（单机多卡示例）
+# - 若在多节点环境运行，请使用下方 multi-node 示例并填入集群变量。
+# -------------------------
 accelerate launch \
   --config_file starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 8 \
@@ -50,10 +72,10 @@ accelerate launch \
   # --is_debug True
 
 
-
-
-# multi-node launch example
-
+# -------------------------
+# multi-node 启动示例（注释示例，按需取消注释并设置集群变量）
+# - 在 Slurm 或自建多机环境中运行时使用。
+# -------------------------
 # accelerate launch \
 #   --config_file starVLA/config/deepseeds/deepspeed_zero2.yaml \
 #   --main_process_ip $MASTER_ADDR \
@@ -69,4 +91,4 @@ accelerate launch \
 #   --run_id ${run_id} \
 #   --wandb_project your_project \
 #   --wandb_entity your_name
-
+# =============================================================================
