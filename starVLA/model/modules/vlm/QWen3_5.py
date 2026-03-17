@@ -60,7 +60,6 @@ class _QWen3_5_VL_Interface(nn.Module):
 
         model = Qwen3_5ForConditionalGeneration.from_pretrained(
             model_id,
-            attn_implementation="flash_attention_2",
             torch_dtype=torch.bfloat16,
         )
         processor = AutoProcessor.from_pretrained(model_id)
