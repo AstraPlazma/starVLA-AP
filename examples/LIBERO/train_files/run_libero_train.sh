@@ -10,7 +10,7 @@ export NCCL_TIMEOUT=10000  # timeout set to 1 hour (unit: seconds)
 export NCCL_SOCKET_TIMEOUT_MS=360000
 ###########################################################################################
 # === Please modify the following paths according to your environment ===
-Framework_name=QwenGR00T
+Framework_name=QwenMem
 freeze_module_list=''
 base_vlm=playground/Pretrained_models/Qwen3.5-0.8B
 config_yaml=./examples/LIBERO/train_files/starvla_cotrain_libero.yaml

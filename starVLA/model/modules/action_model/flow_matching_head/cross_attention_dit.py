@@ -88,6 +88,7 @@ class BasicTransformerBlock(nn.Module):
         ff_inner_dim: Optional[int] = None,
         ff_bias: bool = True,
         attention_out_bias: bool = True,
+        use_per_attn: bool = False,
     ):
         super().__init__()
         self.dim = dim
@@ -101,6 +102,7 @@ class BasicTransformerBlock(nn.Module):
         self.positional_embeddings = positional_embeddings
         self.num_positional_embeddings = num_positional_embeddings
         self.norm_type = norm_type
+        self.use_per_attn = use_per_attn
 
         if positional_embeddings and (num_positional_embeddings is None):
             raise ValueError(
@@ -132,6 +134,21 @@ class BasicTransformerBlock(nn.Module):
             out_bias=attention_out_bias,
         )
 
+        # 2. Perception memory cross-attention (optional)
+        if self.use_per_attn:
+            self.norm2 = nn.LayerNorm(dim, eps=norm_eps)
+            self.per_attn = nn.MultiheadAttention(
+                embed_dim=dim,
+                num_heads=num_attention_heads,
+                bias=True,
+                batch_first=True,
+            )
+            # Zero initialization for stable training
+            nn.init.constant_(self.per_attn.in_proj_weight, 0.)
+            nn.init.constant_(self.per_attn.in_proj_bias, 0.)
+            nn.init.constant_(self.per_attn.out_proj.weight, 0.)
+            nn.init.constant_(self.per_attn.out_proj.bias, 0.)
+
         # 3. Feed-forward
         self.norm3 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
         self.ff = FeedForward(
@@ -154,6 +171,7 @@ class BasicTransformerBlock(nn.Module):
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         temb: Optional[torch.LongTensor] = None,
+        per_token: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
         # 0. Self-Attention
@@ -165,10 +183,10 @@ class BasicTransformerBlock(nn.Module):
         if self.pos_embed is not None:
             norm_hidden_states = self.pos_embed(norm_hidden_states)
 
-        attn_output = self.attn1( 
-            norm_hidden_states, 
+        attn_output = self.attn1(
+            norm_hidden_states,
             encoder_hidden_states=encoder_hidden_states,
-            attention_mask=encoder_attention_mask, #@JinhuiYE original attention_mask=attention_mask
+            attention_mask=encoder_attention_mask,
         )
         if self.final_dropout:
             attn_output = self.final_dropout(attn_output)
@@ -177,7 +195,13 @@ class BasicTransformerBlock(nn.Module):
         if hidden_states.ndim == 4:
             hidden_states = hidden_states.squeeze(1)
 
-        # 4. Feed-forward
+        # 1. Perception memory cross-attention
+        if self.use_per_attn and per_token is not None:
+            norm_hidden_states = self.norm2(hidden_states)
+            per_attn_output, _ = self.per_attn(norm_hidden_states, per_token, per_token)
+            hidden_states = hidden_states + per_attn_output
+
+        # 2. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
         ff_output = self.ff(norm_hidden_states)
 
@@ -191,7 +215,7 @@ class DiT(ModelMixin, ConfigMixin):
     _supports_gradient_checkpointing = True
 
     # register_to_config 的作用是创建类的时候会自动把传入的参数注册到 config 中，这样后续调用的时候可以通过 self.config.xxx 调用 还不是 self.xxx
-    @register_to_config # 去看一下这个的作用 --> 将传入的参数注册到配置中 TODO 改为我们的单例模式, 写一个 能够merge 的 @merge_pram_config
+    @register_to_config
     def __init__(
         self,
         num_attention_heads: int = 8,
@@ -212,19 +236,28 @@ class DiT(ModelMixin, ConfigMixin):
         positional_embeddings: Optional[str] = "sinusoidal",
         interleave_self_attention=False,
         cross_attention_dim: Optional[int] = None,
+        use_per_attn: bool = False,
+        per_token_size: Optional[int] = None,
         **kwargs
     ):
         super().__init__()
         self.attention_head_dim = attention_head_dim
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
         self.gradient_checkpointing = False
+        self.use_per_attn = use_per_attn
 
         # Timestep encoder
-        #  self.config.compute_dtype 可能不存在，要提前处理
         compute_dtype = getattr(self.config, 'compute_dtype', torch.float32)
-        self.timestep_encoder = TimestepEncoder( # TODO BUG, train 的时候 self.config.compute_dtype 不会报错， 但是 eval 的时候会
+        self.timestep_encoder = TimestepEncoder(
             embedding_dim=self.inner_dim, compute_dtype=compute_dtype
         )
+
+        # Per-token embedder
+        if self.use_per_attn:
+            assert per_token_size is not None, "per_token_size must be provided when use_per_attn=True"
+            self.per_token_embedder = nn.Linear(per_token_size, self.inner_dim)
+            nn.init.normal_(self.per_token_embedder.weight, std=0.02)
+            nn.init.constant_(self.per_token_embedder.bias, 0)
 
         all_blocks = []
         for idx in range(self.config.num_layers):
@@ -248,6 +281,7 @@ class DiT(ModelMixin, ConfigMixin):
                     num_positional_embeddings=self.config.max_num_positional_embeddings,
                     final_dropout=final_dropout,
                     cross_attention_dim=curr_cross_attention_dim,
+                    use_per_attn=use_per_attn,
                 )
             ]
         self.transformer_blocks = nn.ModuleList(all_blocks)
@@ -267,10 +301,15 @@ class DiT(ModelMixin, ConfigMixin):
         encoder_hidden_states: torch.Tensor,  # Shape: (B, S, D)
         timestep: Optional[torch.LongTensor] = None,
         return_all_hidden_states: bool = False,
-        encoder_attention_mask=None
+        encoder_attention_mask=None,
+        per_token: Optional[torch.Tensor] = None,
     ):
         # Encode timesteps
         temb = self.timestep_encoder(timestep)
+
+        # Embed per_token if provided
+        if self.use_per_attn and per_token is not None:
+            per_token = self.per_token_embedder(per_token)
 
         # Process through transformer blocks - single pass through the blocks
         hidden_states = hidden_states.contiguous()
@@ -287,6 +326,7 @@ class DiT(ModelMixin, ConfigMixin):
                     encoder_hidden_states=None,
                     encoder_attention_mask=None,
                     temb=temb,
+                    per_token=per_token if self.use_per_attn else None,
                 )
             else:
                 hidden_states = block(
@@ -295,6 +335,7 @@ class DiT(ModelMixin, ConfigMixin):
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
                     temb=temb,
+                    per_token=per_token if self.use_per_attn else None,
                 )
             all_hidden_states.append(hidden_states)
 

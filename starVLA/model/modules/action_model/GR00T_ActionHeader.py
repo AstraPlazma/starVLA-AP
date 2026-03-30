@@ -97,6 +97,15 @@ class FlowmatchingActionHead(nn.Module):
         self.input_embedding_dim = action_model_cfg["input_embedding_dim"]
         diffusion_model_cfg = config.diffusion_model_cfg
         diffusion_model_cfg = {**action_model_cfg, **diffusion_model_cfg}
+
+        # Enable per_attn for dual memory mechanism
+        mem_cfg = full_config.framework.get("memory", {})
+        use_per_attn = mem_cfg.get("use_per_attn", True)
+        per_token_size = mem_cfg.get("per_token_size", 256)
+
+        diffusion_model_cfg['use_per_attn'] = use_per_attn
+        diffusion_model_cfg['per_token_size'] = per_token_size
+
         self.model = DiT(**diffusion_model_cfg)
         self.action_dim = config.action_dim
         self.action_horizon = config.future_action_window_size + 1
@@ -136,10 +145,11 @@ class FlowmatchingActionHead(nn.Module):
         return BatchFeature(data=batch)
 
 
-    def forward(self, vl_embs: torch.Tensor, actions: torch.Tensor, state: torch.Tensor = None, encoder_attention_mask=None):
+    def forward(self, vl_embs: torch.Tensor, actions: torch.Tensor, state: torch.Tensor = None, encoder_attention_mask=None, per_tokens: torch.Tensor = None):
         """
-        vl_embs: shape (B, seq_length, feature_dim)
+        vl_embs: shape (B, seq_length, feature_dim) - cognition memory tokens
         actions: shape (B, future_action_window_size, D_action)
+        per_tokens: shape (B, N, per_token_size) - perception memory tokens (optional)
         """
         device = vl_embs.device
 
@@ -177,7 +187,8 @@ class FlowmatchingActionHead(nn.Module):
             encoder_hidden_states=vl_embs,
             encoder_attention_mask=encoder_attention_mask,
             timestep=t_discretized,
-            return_all_hidden_states=False,  # NOTE (YL): not using flare now
+            return_all_hidden_states=False,
+            per_token=per_tokens,
         )
         pred = self.action_decoder(model_output)
         pred_actions = pred[:, -actions.shape[1] :]
@@ -187,7 +198,7 @@ class FlowmatchingActionHead(nn.Module):
         return loss
 
     @torch.no_grad()
-    def predict_action(self, vl_embs: torch.Tensor, state: torch.Tensor = None) -> torch.Tensor:
+    def predict_action(self, vl_embs: torch.Tensor, state: torch.Tensor = None, per_tokens: torch.Tensor = None) -> torch.Tensor:
         # Set initial actions as the sampled noise.
         batch_size = vl_embs.shape[0]
         device = vl_embs.device
@@ -229,6 +240,7 @@ class FlowmatchingActionHead(nn.Module):
                 hidden_states=sa_embs,
                 encoder_hidden_states=vl_embs,
                 timestep=timesteps_tensor,
+                per_token=per_tokens,
             )
             pred = self.action_decoder(model_output)
 

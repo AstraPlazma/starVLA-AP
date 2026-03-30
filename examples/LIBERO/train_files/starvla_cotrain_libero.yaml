@@ -8,13 +8,22 @@ is_debug: false
 
 
 framework:
-  name: QwenGR00T
+  name: QwenMem
   qwenvl:
-    base_vlm: ./playground/Pretrained_models/Qwen2.5-VL-3B-Instruct-Action
+    base_vlm: ./playground/Pretrained_models/Qwen3.5-0.8B
     attn_implementation: flash_attention_2
     vl_hidden_dim: 2048
   dino:
     dino_backbone: dinov2_vits14
+  memory:
+    per_token_size: 256
+    mem_length: 16
+    retrieval_layers: 2
+    use_timestep_pe: true
+    fusion_type: gate
+    consolidate_type: tome
+    update_fused: false
+    use_per_attn: true
   action_model:
     action_model_type: DiT-B
     action_hidden_dim: 1024     # TODO merge with hidden_size, in config v2
@@ -57,7 +66,7 @@ datasets:
     max_pixels: 307200
     min_pixels: 784
     model_max_length: 2048
-    model_type: qwen2.5vl
+    model_type: qwen3.5
     per_device_batch_size: 4
 
   vla_data:
@@ -73,6 +82,8 @@ datasets:
     load_all_data_for_training: true
     obs: ["image_0"]
     video_backend: torchvision_av
+    dataloader_type: group
+    group_size: 16
 
 
 trainer:

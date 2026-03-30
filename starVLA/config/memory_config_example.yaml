@@ -1,0 +1,17 @@
+# Memory mechanism configuration example
+# Add these parameters to your existing training config
+
+framework:
+  memory:
+    per_token_size: 256        # Perception memory compressed dimension
+    mem_length: 16             # Memory bank length
+    retrieval_layers: 2        # Number of retrieval layers
+    use_timestep_pe: true      # Use timestep positional encoding
+    fusion_type: "gate"        # Fusion type: 'gate' or 'add'
+    consolidate_type: "tome"   # Consolidation type: 'fifo' or 'tome'
+    update_fused: false        # Update fused memory or original
+
+datasets:
+  vla_data:
+    dataloader_type: "group"   # Dataloader type: 'group' or 'stream'
+    group_size: 16             # Group size for 'group' dataloader

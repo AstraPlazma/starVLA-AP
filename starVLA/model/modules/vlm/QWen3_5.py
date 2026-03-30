@@ -38,7 +38,7 @@ import torch.nn as nn
 class _QWen3_5_VL_Interface(nn.Module):
     """
     This exists because of the diversity of VLMs, so we encapsulate the changes here.
-    Lightweight wrapper around Qwen3.5-VL (Qwen3_5ForConditionalGeneration).
+    Lightweight wrapper around Qwen3.5 (Qwen3_5ForConditionalGeneration).
 
     Purpose:
         - Unify interface with other VLM backends (CausalLM-like usage).
@@ -49,8 +49,8 @@ class _QWen3_5_VL_Interface(nn.Module):
 
     def __init__(self, config: Optional[dict] = None, **kwargs):
         """
-        Initialize the Qwen3.5-VL wrapper.
-        Following https://huggingface.co/Qwen/Qwen3.5-VL-4B-Instruct
+        Initialize the Qwen3.5 wrapper.
+        Following https://huggingface.co/Qwen/Qwen3.5-4B-Instruct
 
         """
         super().__init__()
@@ -77,18 +77,53 @@ class _QWen3_5_VL_Interface(nn.Module):
             self._ACTION_TOKEN_MIN = _ACTION_TOKEN_MIN
             self._ACTION_TOKEN_MAX = _ACTION_TOKEN_MAX
 
+        # Hook to capture raw vision features during the single main forward pass,
+        # avoiding a redundant second run of the visual encoder.
+        self._raw_vision_feats: Optional[torch.Tensor] = None
+        self.model.model.visual.register_forward_hook(self._capture_vision_hook)
+
+    def _capture_vision_hook(self, module, input, output):
+        """Store the visual encoder output during the main model forward pass."""
+        if isinstance(output, torch.Tensor):
+            self._raw_vision_feats = output
+        elif hasattr(output, 'last_hidden_state'):
+            self._raw_vision_feats = output.last_hidden_state
+
     def forward(
         self,
         **kwargs,
     ) -> CausalLMOutputWithPast:
         """
-        Forward pass delegating to underlying Qwen3.5-VL backbone.
+        Forward pass delegating to underlying Qwen3.5 backbone.
+        Extracts pure vision features for perception memory via forward hook
+        (visual encoder runs only once).
         """
+        image_grid_thw = kwargs.get('image_grid_thw', None)
+        input_ids = kwargs.get('input_ids', None)
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            outputs = self.model(
-                **kwargs,
-            )
+            outputs = self.model(**kwargs)
+
+        # Process vision features captured by hook during the forward above
+        if self._raw_vision_feats is not None and image_grid_thw is not None and input_ids is not None:
+            flat_feats = self._raw_vision_feats  # [total_images*N, D]
+
+            batch_size = input_ids.shape[0]
+            num_images_total = image_grid_thw.shape[0]
+            num_images_per_sample = num_images_total // batch_size
+
+            N = flat_feats.shape[0] // num_images_total
+            D = flat_feats.shape[1]
+
+            vision_feats_all = flat_feats.reshape(num_images_total, N, D)
+
+            if num_images_per_sample > 1:
+                vision_feats_all = vision_feats_all.reshape(batch_size, num_images_per_sample, N, D)
+                self.vision_feats = vision_feats_all.mean(dim=1)
+            else:
+                self.vision_feats = vision_feats_all
+
+            self._raw_vision_feats = None  # release reference
 
         return outputs
 
@@ -113,7 +148,7 @@ class _QWen3_5_VL_Interface(nn.Module):
     def build_qwenvl_inputs(self, images, instructions, solutions=None, **kwargs):
         """
         Build model inputs from raw data (images + instructions + optional solutions).
-        Follow Oficial Qwen3.5-VL Instruct format: https://huggingface.co/Qwen/Qwen3.5-VL-4B-Instruct
+        Follow Oficial Qwen3.5 Instruct format: https://huggingface.co/Qwen/Qwen3.5-4B-Instruct
         """
 
         # Create messages: one message per sample
@@ -192,6 +227,6 @@ if __name__ == "__main__":
 
     cfg = OmegaConf.load(args.config_yaml)
     
-    cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Qwen3.5-VL-4B-Instruct"
+    cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Qwen3.5-4B-Instruct"
     qwen_vl = _QWen3_5_VL_Interface(cfg)
     pass

@@ -1,11 +1,11 @@
 # Copyright 2025 starVLA community. All rights reserved.
 # Licensed under the MIT License, Version 1.0 (the "License");
-# Implemented by [Junqiu YU / Fudan University] in [2025]. 
+# Implemented by [Junqiu YU / Fudan University] in [2025].
 # Design and Merged by [Jinhui YE / HKUST University] in [2025].
 """
-Qwen-GR00T Framework
-A lightweight implementation that Qwen-VL + Flow-matching head to directly predict continuous actions
-Flow-matching header is copyright from GR00T N1.5,
+QwenMem Framework
+Qwen-VL with dual memory mechanism (Cognitive + Perceptual) + Flow-matching action head
+Memory mechanism adapted from MemoryVLA, Flow-matching header from GR00T N1.5
 """
 import sys
 from pathlib import Path
@@ -23,6 +23,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from PIL import Image
+import math
 
 
 
@@ -39,20 +40,21 @@ from starVLA.model.modules.vlm import get_vlm_model
 from starVLA.model.modules.action_model.GR00T_ActionHeader import get_action_model, FlowmatchingActionHead
 from starVLA.training.trainer_utils.trainer_tools import resize_images
 from starVLA.model.tools import FRAMEWORK_REGISTRY
+from starVLA.model.modules.memory import BottleneckSE, CogMemBank, PerMemBank
 
 
-@FRAMEWORK_REGISTRY.register("QwenGR00T")
-class Qwen_GR00T(baseframework):
+@FRAMEWORK_REGISTRY.register("QwenMem")
+class QwenMem(baseframework):
     """
-    Multimodal vision-language-action model.
+    Multimodal vision-language-action model with dual memory mechanism.
 
     Components:
-      - Qwen3.5 interface for fused language/vision token embeddings
-      - Layer-wise QFormer for multi-layer feature aggregation
-      - DINO encoder for dense multi-view spatial tokens
-      - DiT diffusion head for future action sequence modeling
+      - Qwen3.5 VL interface for fused language/vision token embeddings
+      - Dual memory banks: CogMemBank (cognitive) + PerMemBank (perceptual)
+      - BottleneckSE for perception feature compression
+      - DiT diffusion head with perception attention for action prediction
 
-    Focus: Predict future continuous actions conditioned on images + instruction.
+    Focus: Predict future continuous actions with episodic memory enhancement.
     """
 
     def __init__(
@@ -78,6 +80,61 @@ class Qwen_GR00T(baseframework):
         self.future_action_window_size = config.framework.action_model.future_action_window_size
         self.past_action_window_size = config.framework.action_model.past_action_window_size
         self.chunk_len = self.past_action_window_size + 1 + self.future_action_window_size
+
+        # Memory mechanism parameters
+        self.cog_token_size = self.qwen_vl_interface.model.config.hidden_size
+
+        # Get vision_dim from Qwen config (not lazy initialization)
+        self.vision_dim = self.qwen_vl_interface.model.config.vision_config.hidden_size
+
+        # Get memory config with defaults
+        mem_cfg = config.framework.get("memory", {})
+        self.per_token_size = mem_cfg.get("per_token_size", 256)
+        self.mem_length = mem_cfg.get("mem_length", 16)
+        self.retrieval_layers = mem_cfg.get("retrieval_layers", 2)
+        self.use_timestep_pe = mem_cfg.get("use_timestep_pe", True)
+        self.fusion_type = mem_cfg.get("fusion_type", "gate")
+        self.consolidate_type = mem_cfg.get("consolidate_type", "tome")
+        self.update_fused = mem_cfg.get("update_fused", False)
+
+        # Get dataloader config
+        data_cfg = config.datasets.get("vla_data", {})
+        self.dataloader_type = data_cfg.get("dataloader_type", "group")
+        self.group_size = data_cfg.get("group_size", 16)
+
+        # Initialize memory modules immediately (for optimizer to see parameters)
+        self.per_compr = BottleneckSE(
+            C_in=self.vision_dim,
+            C_mid=self.per_token_size * 2,
+            C_out=self.per_token_size,
+        )
+
+        self.cog_mem_bank = CogMemBank(
+            dataloader_type=self.dataloader_type,
+            group_size=self.group_size,
+            token_size=self.cog_token_size,
+            mem_length=self.mem_length,
+            retrieval_layers=self.retrieval_layers,
+            use_timestep_pe=self.use_timestep_pe,
+            fusion_type=self.fusion_type,
+            consolidate_type=self.consolidate_type,
+            update_fused=self.update_fused,
+        )
+
+        self.per_mem_bank = PerMemBank(
+            dataloader_type=self.dataloader_type,
+            group_size=self.group_size,
+            token_size=self.per_token_size,
+            mem_length=self.mem_length,
+            retrieval_layers=self.retrieval_layers,
+            use_timestep_pe=self.use_timestep_pe,
+            fusion_type=self.fusion_type,
+            consolidate_type=self.consolidate_type,
+            update_fused=self.update_fused,
+        )
+
+        # Inference state tracking
+        self.cur_timestep = 0
         
 
     def forward(
@@ -91,9 +148,12 @@ class Qwen_GR00T(baseframework):
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         actions = [example["action"] for example in examples]  # label [B, len, 7]
-        
+
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        
+
+        # Extract episode_ids and timesteps for memory mechanism
+        episode_ids = np.array([example.get("episode_id", 0) for example in examples])
+        timesteps = np.array([example.get("timestep", 0) for example in examples])
 
         # Step 1: QWenVL input format
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
@@ -107,10 +167,91 @@ class Qwen_GR00T(baseframework):
             # last_hidden_state: [B, seq_len, H]
             last_hidden = qwenvl_outputs.hidden_states[-1]   # [B, L, H]
 
+            # Extract vision features for perception memory.
+            # Detach to stop gradients from flowing back through the visual encoder
+            # via the per_tokens path (matches MemoryVLA where VLM is frozen).
+            # The visual encoder still receives gradients via the cog_tokens → last_hidden path.
+            vision_feats = self.qwen_vl_interface.vision_feats.detach()  # [B, N, D]
+
+            # Extract spatial shape from image_grid_thw
+            image_grid_thw = qwen_inputs.get('image_grid_thw', None)  # [B, 3] where 3=[t,h,w]
+
+            # Set vision_dim on first forward pass
+            if self.vision_dim is None:
+                self.vision_dim = vision_feats.shape[-1]
+                logger.info(f"Vision dimension detected: {self.vision_dim}")
+
+                # Initialize memory modules
+                self.per_compr = BottleneckSE(
+                    C_in=self.vision_dim,
+                    C_mid=self.per_token_size * 2,
+                    C_out=self.per_token_size,
+                ).to(vision_feats.device)
+
+                self.cog_mem_bank = CogMemBank(
+                    dataloader_type=self.dataloader_type,
+                    group_size=self.group_size,
+                    token_size=self.cog_token_size,
+                    mem_length=self.mem_length,
+                    retrieval_layers=self.retrieval_layers,
+                    use_timestep_pe=self.use_timestep_pe,
+                    fusion_type=self.fusion_type,
+                    consolidate_type=self.consolidate_type,
+                    update_fused=self.update_fused,
+                ).to(vision_feats.device)
+
+                self.per_mem_bank = PerMemBank(
+                    dataloader_type=self.dataloader_type,
+                    group_size=self.group_size,
+                    token_size=self.per_token_size,
+                    mem_length=self.mem_length,
+                    retrieval_layers=self.retrieval_layers,
+                    use_timestep_pe=self.use_timestep_pe,
+                    fusion_type=self.fusion_type,
+                    consolidate_type=self.consolidate_type,
+                    update_fused=self.update_fused,
+                ).to(vision_feats.device)
+
+                logger.info("Memory modules initialized")
+
+            # Process with dual memory mechanism (if modules initialized)
+            if self.cog_mem_bank is not None and self.per_mem_bank is not None:
+
+                # Extract cognition tokens (use attention_mask to find last valid token)
+                attention_mask = qwen_inputs['attention_mask']
+                cumulative_sum = attention_mask.cumsum(dim=1)
+                last_true_indices = (cumulative_sum == cumulative_sum.max(dim=1, keepdim=True)[0]).float().argmax(dim=1)
+                expanded_indices = last_true_indices.unsqueeze(-1).expand(-1, last_hidden.size(-1))
+                cog_tokens = last_hidden.gather(1, expanded_indices.unsqueeze(1))  # [B, 1, H]
+
+                # Compress perception features with spatial shape
+                if image_grid_thw is not None:
+                    # Extract h, w from first image's grid_thw
+                    spatial_h = int(image_grid_thw[0, 1].item())
+                    spatial_w = int(image_grid_thw[0, 2].item())
+                    per_tokens = self.per_compr(vision_feats, spatial_shape=(spatial_h, spatial_w))
+                else:
+                    per_tokens = self.per_compr(vision_feats)
+
+                # Process through memory banks
+                cog_tokens = self.cog_mem_bank.process_batch(
+                    tokens=cog_tokens,
+                    episode_ids=episode_ids,
+                    timesteps=timesteps,
+                )  # [B, 1, H]
+
+                per_tokens = self.per_mem_bank.process_batch(
+                    tokens=per_tokens,
+                    episode_ids=episode_ids,
+                    timesteps=timesteps,
+                )  # [B, N, per_token_size]
+            else:
+                per_tokens = None
+
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
             actions = torch.tensor(
-                np.array(actions), device=last_hidden.device, dtype=last_hidden.dtype
+                np.array(actions), device=cog_tokens.device, dtype=cog_tokens.dtype
             )  # [B, T_full, action_dim]
             actions_target = actions[:, -(self.future_action_window_size+1):, :]  # (B, chunk_len, action_dim)
 
@@ -118,16 +259,17 @@ class Qwen_GR00T(baseframework):
                 self.config.trainer.get("repeated_diffusion_steps", 4) if self.config and self.config.trainer else 4
             )
             actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
-            last_hidden_repeated = last_hidden.repeat(repeated_diffusion_steps, 1, 1)
-            
+            cog_tokens_repeated = cog_tokens.repeat(repeated_diffusion_steps, 1, 1)  # [4B, 1, H]
+            per_tokens_repeated = per_tokens.repeat(repeated_diffusion_steps, 1, 1) if per_tokens is not None else None
+
             state_repeated = None
             if state is not None:
                 state = torch.tensor(
-                    np.array(state), device=last_hidden.device, dtype=last_hidden.dtype
+                    np.array(state), device=cog_tokens.device, dtype=cog_tokens.dtype
                 )
                 state_repeated = state.repeat(repeated_diffusion_steps, 1, 1)
 
-            action_loss = self.action_model(last_hidden_repeated, actions_target_repeated, state_repeated)  # (B, chunk_len, action_dim)
+            action_loss = self.action_model(cog_tokens_repeated, actions_target_repeated, state_repeated, per_tokens=per_tokens_repeated)
 
 
 
@@ -137,29 +279,31 @@ class Qwen_GR00T(baseframework):
     def predict_action(
         self,
         examples: List[dict],
+        episode_first_frame: bool = False,
         **kwargs: str,
     ) -> np.ndarray:
         """
-        Steps:
-          1. Resize images to training resolution (if specified)
-          2. Encode with QwenVL (hidden states retained)
-          6. Return normalized action trajectory
+        Predict action with memory mechanism.
+
+        Args:
+            examples: List of input examples
+            episode_first_frame: If True, reset memory banks for new episode
+            **kwargs: Additional arguments
+
         Returns:
-            dict:
-                normalized_actions (np.ndarray): Shape [B, T, action_dim], diffusion-sampled normalized actions.
+            dict: normalized_actions (np.ndarray): Shape [B, T, action_dim]
         """
         if type(examples) is not list:
             examples = [examples]
-        batch_images = [to_pil_preserve(example["image"]) for example in examples]  #  [B，[PLT]]
-        instructions = [example["lang"] for example in examples]  # [B, str]
-    
-        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        
+        batch_images = [to_pil_preserve(example["image"]) for example in examples]
+        instructions = [example["lang"] for example in examples]
+        state = [example["state"] for example in examples] if "state" in examples[0] else None
+
         train_obs_image_size = getattr(self.config.datasets.vla_data, "image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
-    
-        # Step 1: QWenVL input format
+
+        # QWenVL forward
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             qwenvl_outputs = self.qwen_vl_interface(
@@ -168,15 +312,58 @@ class Qwen_GR00T(baseframework):
                 output_hidden_states=True,
                 return_dict=True,
             )
+            last_hidden = qwenvl_outputs.hidden_states[-1]
+            vision_feats = self.qwen_vl_interface.vision_feats
 
-            # last_hidden_state: [B, seq_len, H]
-            last_hidden = qwenvl_outputs.hidden_states[-1]   # [B, L, H]
+            # Extract spatial shape from image_grid_thw
+            image_grid_thw = qwen_inputs.get('image_grid_thw', None)
 
-        state = torch.from_numpy(np.array(state)).to(last_hidden.device, dtype=last_hidden.dtype) if state is not None else None
-        
-        # Step 4: Action Expert Forward
+            per_tokens = None
+
+            # Process with memory mechanism
+            if self.cog_mem_bank is not None and self.per_mem_bank is not None:
+                # Reset memory if new episode
+                if episode_first_frame:
+                    self.cog_mem_bank.reset()
+                    self.per_mem_bank.reset()
+                    self.cur_timestep = 0
+
+                # Extract cognition tokens
+                attention_mask = qwen_inputs['attention_mask']
+                cumulative_sum = attention_mask.cumsum(dim=1)
+                last_true_indices = (cumulative_sum == cumulative_sum.max(dim=1, keepdim=True)[0]).float().argmax(dim=1)
+                expanded_indices = last_true_indices.unsqueeze(-1).expand(-1, last_hidden.size(-1))
+                cog_tokens = last_hidden.gather(1, expanded_indices.unsqueeze(1))
+
+                # Compress perception features
+                if image_grid_thw is not None:
+                    spatial_shape = (image_grid_thw[0, 1].item(), image_grid_thw[0, 2].item())
+                    per_tokens = self.per_compr(vision_feats, spatial_shape)
+                else:
+                    per_tokens = self.per_compr(vision_feats)
+
+                # Process through memory banks
+                episode_ids = np.array([0] * len(examples))
+                timesteps = np.array([self.cur_timestep] * len(examples))
+                self.cur_timestep += 1
+
+                cog_tokens = self.cog_mem_bank.process_batch(
+                    tokens=cog_tokens,
+                    episode_ids=episode_ids,
+                    timesteps=timesteps,
+                )
+
+                per_tokens = self.per_mem_bank.process_batch(
+                    tokens=per_tokens,
+                    episode_ids=episode_ids,
+                    timesteps=timesteps,
+                )
+
+        state = torch.from_numpy(np.array(state)).to(cog_tokens.device, dtype=cog_tokens.dtype) if state is not None else None
+
+        # Action prediction with dual memory: cog_tokens as sole conditioning (same as MemoryVLA)
         with torch.autocast("cuda", dtype=torch.float32):
-            pred_actions = self.action_model.predict_action(last_hidden, state)  # (B, chunk_len, action_dim)
+            pred_actions = self.action_model.predict_action(cog_tokens, state, per_tokens=per_tokens)
 
         normalized_actions = pred_actions.detach().cpu().numpy()
         return {"normalized_actions": normalized_actions}
@@ -202,7 +389,7 @@ if __name__ == "__main__":
     # cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Florence-2-large"
     
 
-    model: Qwen_GR00T = Qwen_GR00T(cfg)
+    model: QwenMem = QwenMem(cfg)
     print(model)
 
 
