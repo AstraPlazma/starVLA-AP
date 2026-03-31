@@ -42,7 +42,7 @@ def main(args) -> None:
 
 def build_argparser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt_path", type=str, default="Qwen/Qwen2.5-VL-3B-Instruct")
+    parser.add_argument("--ckpt_path", type=str, default="Qwen/Qwen3.5-0.8B")
     parser.add_argument("--port", type=int, default=10093)
     parser.add_argument("--use_bf16", action="store_true")
     parser.add_argument("--idle_timeout" , type=int, default=1800, help="Idle timeout in seconds, -1 means never close")
