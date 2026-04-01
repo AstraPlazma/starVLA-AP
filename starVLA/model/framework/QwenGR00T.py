@@ -70,6 +70,7 @@ class Qwen_GR00T(baseframework):
         super().__init__()
         self.config = config
         self.qwen_vl_interface = get_vlm_model(config=self.config)
+        
         # align dims --> we should put them to config or no?
         self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim = self.qwen_vl_interface.model.config.hidden_size
 
