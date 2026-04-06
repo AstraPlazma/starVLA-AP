@@ -113,6 +113,10 @@ class VLATrainer(TrainerUtils):
         self.completed_steps = 0
         self.total_batch_size = self._calculate_total_batch_size()
 
+        # EMA config (0 = disabled)
+        self.ema_decay = float(getattr(cfg.trainer, "ema_decay", 0.0))
+        self.ema_state = None
+
     def prepare_training(self):
         rank = dist.get_rank() if dist.is_initialized() else 0
         seed = self.config.seed + rank if hasattr(self.config, "seed") else rank + 3047
@@ -137,6 +141,11 @@ class VLATrainer(TrainerUtils):
         )
 
         self._init_wandb()
+
+        # Initialize EMA after model is prepared (distributed wrappers applied)
+        if self.ema_decay > 0:
+            self.ema_state = self.build_ema_state(self.model, self.accelerator)
+            logger.info(f"EMA initialized with decay={self.ema_decay}")
 
     def _calculate_total_batch_size(self):
         """Calculate global batch size."""
@@ -219,6 +228,15 @@ class VLATrainer(TrainerUtils):
                 torch.save(state_dict, checkpoint_path + "_pytorch_model.pt")
             else:
                 raise ValueError(f"Unsupported save_format `{save_format}`. Expected `pt` or `safetensors`.")
+
+            # Save EMA weights alongside the checkpoint
+            if self.ema_state is not None:
+                if save_format == "safetensors":
+                    from safetensors.torch import save_file as save_st
+                    save_st(self.ema_state, checkpoint_path + "_ema.safetensors")
+                else:
+                    torch.save(self.ema_state, checkpoint_path + "_ema.pt")
+                self.accelerator.print(f"  EMA weights saved at {checkpoint_path}_ema.{save_format}")
 
             summary_data = {"steps": self.completed_steps}
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
@@ -307,7 +325,9 @@ class VLATrainer(TrainerUtils):
         """Run simple action-eval on current batch and attach score to metrics."""
         examples = self._get_next_batch()
         actions = [example["action"] for example in examples]
-        output_dict = self.model.predict_action(examples=examples, use_ddim=True, num_ddim_steps=20)
+
+        with self.ema_swap(self.model, self.ema_state, self.accelerator):
+            output_dict = self.model.predict_action(examples=examples, use_ddim=True, num_ddim_steps=20)
 
         if self.accelerator.is_main_process:
             normalized_actions = output_dict["normalized_actions"]
@@ -347,8 +367,17 @@ class VLATrainer(TrainerUtils):
             self.optimizer.step()
             self.lr_scheduler.step()
 
+            # EMA update (after optimizer step, only when gradients are synced)
+            if self.ema_decay > 0 and self.accelerator.sync_gradients:
+                self.update_ema(self.ema_state, self.model, self.accelerator, self.ema_decay)
+
         return {
             "action_dit_loss": action_loss.item(),
+            **({
+                "pos_error": output_dict["pos_error"].item(),
+                "neg_error": output_dict["neg_error"].item(),
+                "contrastive_active": float(output_dict["contrastive_active"]),
+            } if "pos_error" in output_dict else {}),
         }
 
     def _finalize_training(self):
@@ -357,7 +386,14 @@ class VLATrainer(TrainerUtils):
             save_format = getattr(self.config.trainer, "save_format", "pt")
             final_checkpoint = os.path.join(self.config.output_dir, "final_model")
             os.makedirs(final_checkpoint, exist_ok=True)
-            state_dict = self.accelerator.get_state_dict(self.model)
+
+            # Use EMA weights for final model if available
+            if self.ema_state is not None:
+                state_dict = {k: v.to(dtype=torch.bfloat16) for k, v in self.ema_state.items()}
+                logger.info("Final model exported with EMA weights")
+            else:
+                state_dict = self.accelerator.get_state_dict(self.model)
+
             if save_format == "safetensors":
                 from safetensors.torch import save_file
 

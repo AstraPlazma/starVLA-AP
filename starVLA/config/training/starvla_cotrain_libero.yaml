@@ -32,6 +32,7 @@ framework:
     noise_s: 0.999
     num_timestep_buckets: 1000
     num_inference_timesteps: 4
+    contrastive_weight: 0.05  # triplet contrastive loss weight (0 = disabled, pure MSE)
     num_target_vision_tokens: 32
     diffusion_model_cfg:    # DiT Transformers 的参数
       cross_attention_dim: 2048 # VLM 的 dim
@@ -87,6 +88,7 @@ trainer:
   scheduler_specific_kwargs:
     min_lr: 1.0e-06
   freeze_modules: ''
+  ema_decay: 0.9999  # EMA decay factor (0 = disabled)
   loss_scale:
     vla: 1.0
     vlm: 0.1

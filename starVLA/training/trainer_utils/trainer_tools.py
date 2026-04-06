@@ -10,6 +10,7 @@ import re
 import json
 import numpy as np
 import torch
+from contextlib import contextmanager
 
 from accelerate.logging import get_logger
 
@@ -461,6 +462,73 @@ class TrainerUtils:
         else:
             print("No valid JSON part found")
             return None
+
+    # ------------------------------------------------------------------
+    # EMA (Exponential Moving Average) utilities
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def build_ema_state(model, accelerator):
+        """Create an EMA copy of model weights on CPU (main process only).
+
+        Args:
+            model: The (possibly DDP/DeepSpeed-wrapped) model.
+            accelerator: Accelerate instance.
+
+        Returns:
+            dict or None: state_dict clone in float32 on CPU, or None on non-main processes.
+        """
+        if not accelerator.is_main_process:
+            return None
+        state_dict = accelerator.get_state_dict(model)
+        return {k: v.clone().float().cpu() for k, v in state_dict.items()}
+
+    @staticmethod
+    def update_ema(ema_state, model, accelerator, decay=0.9999):
+        """Perform one EMA update step (main process only).
+
+        Formula: ema_k = decay * ema_k + (1 - decay) * model_k
+
+        Args:
+            ema_state: dict returned by build_ema_state (or None).
+            model: The wrapped model.
+            accelerator: Accelerate instance.
+            decay: EMA decay factor.
+        """
+        if ema_state is None or not accelerator.is_main_process:
+            return
+        state_dict = accelerator.get_state_dict(model)
+        for k, v in state_dict.items():
+            ema_state[k].mul_(decay).add_(v.float().cpu(), alpha=1 - decay)
+
+    @staticmethod
+    @contextmanager
+    def ema_swap(model, ema_state, accelerator):
+        """Context manager: temporarily swap model weights with EMA weights.
+
+        On exit, the original weights are restored. Only operates on main process;
+        on other processes this is a no-op pass-through.
+
+        Usage:
+            with TrainerUtils.ema_swap(model, ema_state, accelerator):
+                output = model.predict_action(...)
+        """
+        if ema_state is None or not accelerator.is_main_process:
+            yield
+            return
+
+        unwrapped = accelerator.unwrap_model(model)
+        original_state = {k: v.clone() for k, v in unwrapped.state_dict().items()}
+
+        ema_on_device = {
+            k: v.to(device=next(unwrapped.parameters()).device, dtype=next(unwrapped.parameters()).dtype)
+            for k, v in ema_state.items()
+        }
+        unwrapped.load_state_dict(ema_on_device, strict=False)
+        try:
+            yield
+        finally:
+            unwrapped.load_state_dict(original_state, strict=False)
 
     def _get_latest_checkpoint(self, checkpoint_dir):
         """Find the latest checkpoint in the directory based on step number."""
