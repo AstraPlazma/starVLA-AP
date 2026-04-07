@@ -17,10 +17,10 @@ export MUJOCO_GL=osmesa
 export PYOPENGL_PLATFORM=osmesa
 
 host="127.0.0.1"
-base_port=5694
+base_port=5697
 unnorm_key="franka"
 # your_ckpt=./playground/Pretrained_models/Qwen3.5-0.8B/model.safetensors-00001-of-00001.safetensors
-your_ckpt=./results/Checkpoints/0314_libero4in1_qwen35gr00t/final_model/pytorch_model.pt
+your_ckpt=./results/Checkpoints/0402_libero4in1_qwen35gr00t/final_model/pytorch_model.pt
 # your_ckpt=./playground/Pretrained_models/Qwen2.5-VL-GR00T-LIBERO-4in1/checkpoints/steps_30000_pytorch_model.pt
 # export DEBUG=true
 
@@ -32,7 +32,7 @@ LOG_DIR="logs/$(date +"%Y%m%d_%H%M%S")"
 mkdir -p ${LOG_DIR}
 
 
-task_suite_name=libero_goal
+task_suite_name=libero_10
 num_trials_per_task=50
 video_out_path="results/${task_suite_name}/${folder_name}"
 
