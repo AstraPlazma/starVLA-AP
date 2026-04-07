@@ -115,7 +115,7 @@ class Qwen_Contr(baseframework):
         return {
             "action_loss": action_output["loss"],
             "pos_error": action_output["pos_error"],
-            "neg_error": action_output["neg_error"],
+            "infonce_loss": action_output["infonce_loss"],
             "contrastive_active": action_output["contrastive_active"],
         }
 

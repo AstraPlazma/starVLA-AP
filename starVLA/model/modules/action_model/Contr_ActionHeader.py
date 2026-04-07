@@ -114,6 +114,7 @@ class ContrFlowmatchingActionHead(nn.Module):
 
         # Contrastive loss config (0 = disabled, pure MSE)
         self.contrastive_weight = float(getattr(config, "contrastive_weight", 0.0))
+        self.infonce_temperature = float(getattr(config, "infonce_temperature", 0.1))
 
     def sample_time(self, batch_size, device, dtype):
         sample = self.beta_dist.sample([batch_size]).to(device, dtype=dtype).clamp(max=self.config.noise_s)
@@ -123,41 +124,19 @@ class ContrFlowmatchingActionHead(nn.Module):
         return BatchFeature(data=batch)
 
     # ------------------------------------------------------------------
-    # Contrastive loss (adapted from DeltaFM/triplet_loss.py)
+    # Contrastive loss: MSE + InfoNCE
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _class_conditioned_sampling(labels):
-        """Sample one negative index per sample, ensuring different task label.
-
-        Args:
-            labels: (B,) integer task labels.
-
-        Returns:
-            (B,) negative indices, or None if all labels are identical.
-        """
-        bsz = labels.shape[0]
-        mask = ~(labels[None] == labels[:, None])  # (B, B), True where labels differ
-        weights = mask.float()
-        weights_sum = weights.sum(dim=1, keepdim=True)
-
-        if (weights_sum == 0).all():
-            return None  # all same task — no valid negatives
-
-        if (weights_sum == 0).any():
-            # Some samples have no valid negatives (all same label in their row).
-            # Fallback: uniform random for those rows (will be masked later if needed).
-            fallback = torch.randint(0, bsz, (bsz,), device=labels.device)
-            valid_mask = (weights_sum.squeeze(1) > 0)
-            weights[~valid_mask] = 1.0
-            weights[~valid_mask] = weights[~valid_mask] / weights[~valid_mask].sum(dim=1, keepdim=True)
-
-        weights = weights / weights.sum(dim=1, keepdim=True).clamp(min=1e-8)
-        choices = torch.multinomial(weights, 1).squeeze(1)
-        return choices
+    def _has_valid_negatives(labels):
+        """Check if batch contains at least two different task labels."""
+        return (labels[0] != labels).any()
 
     def _compute_contrastive_loss(self, pred, velocity, task_labels):
-        """Triplet contrastive loss with class-conditioned negative sampling.
+        """MSE regression loss + InfoNCE discrimination loss.
+
+        InfoNCE uses negative L2 distance as similarity, with all
+        different-task samples in the batch as negatives simultaneously.
 
         Args:
             pred: (B, T, action_dim) predicted velocity.
@@ -165,35 +144,56 @@ class ContrFlowmatchingActionHead(nn.Module):
             task_labels: (B,) integer task labels.
 
         Returns:
-            dict: {loss, pos_error, neg_error, contrastive_active}
+            dict: {loss, pos_error, infonce_loss, contrastive_active}
         """
-        pred_flat = pred.flatten(1)          # (B, T*action_dim)
-        velocity_flat = velocity.flatten(1)  # (B, T*action_dim)
+        pred_flat = pred.flatten(1)          # (B, D) where D = T * action_dim
+        velocity_flat = velocity.flatten(1)  # (B, D)
 
-        # Positive error: standard MSE
-        pos_error = ((pred_flat - velocity_flat) ** 2).mean(dim=1)  # (B,)
+        # ---- MSE loss (always computed, never modified) ----
+        mse_loss = ((pred_flat - velocity_flat) ** 2).mean()
 
-        # Negative sampling: pick a sample from a different task
-        neg_indices = self._class_conditioned_sampling(task_labels)
-
-        if neg_indices is None:
-            # All samples in batch share the same task — no valid negatives.
+        # ---- InfoNCE loss ----
+        if not self._has_valid_negatives(task_labels):
             warnings.warn(
                 "[ContrActionHeader] All samples in batch share the same task label. "
-                "Contrastive loss disabled for this step (falling back to pure MSE).",
+                "InfoNCE disabled for this step (falling back to pure MSE).",
                 stacklevel=2,
             )
-            mse = pos_error.mean()
-            return {"loss": mse, "pos_error": mse, "neg_error": mse.new_tensor(0.0), "contrastive_active": False}
+            return {
+                "loss": mse_loss,
+                "pos_error": mse_loss,
+                "infonce_loss": mse_loss.new_tensor(0.0),
+                "contrastive_active": False,
+            }
 
-        velocity_neg = velocity_flat[neg_indices]  # (B, T*action_dim)
-        neg_error = ((pred_flat - velocity_neg) ** 2).mean(dim=1)  # (B,)
+        B = pred_flat.shape[0]
+        tau = self.infonce_temperature
 
-        loss = pos_error - self.contrastive_weight * neg_error  # (B,)
+        # Pairwise negative L2 distance as similarity: sim(i,j) = -||pred_i - vel_j||² / τ
+        # (B, B) matrix where [i,j] = similarity of pred_i to target_j
+        diff = pred_flat.unsqueeze(1) - velocity_flat.unsqueeze(0)  # (B, 1, D) - (1, B, D) = (B, B, D)
+        neg_l2 = -(diff ** 2).mean(dim=-1)  # (B, B), mean over D for numerical stability
+        logits = neg_l2 / tau               # (B, B)
+
+        # Mask: same-task samples should NOT be valid targets in denominator
+        # Only different-task samples are negatives; diagonal (self) is the positive
+        same_task_mask = (task_labels.unsqueeze(0) == task_labels.unsqueeze(1))  # (B, B)
+        # Set same-task (but not self) logits to -inf so they don't contribute to denominator
+        same_task_off_diag = same_task_mask.clone()
+        same_task_off_diag.fill_diagonal_(False)  # keep diagonal (positive)
+        logits = logits.masked_fill(same_task_off_diag, float('-inf'))
+
+        # InfoNCE: cross-entropy where diagonal is the positive class
+        labels_ce = torch.arange(B, device=pred.device)
+        infonce_loss = torch.nn.functional.cross_entropy(logits, labels_ce)
+
+        # Total: MSE + β * InfoNCE
+        total_loss = mse_loss + self.contrastive_weight * infonce_loss
+
         return {
-            "loss": loss.mean(),
-            "pos_error": pos_error.mean(),
-            "neg_error": neg_error.mean(),
+            "loss": total_loss,
+            "pos_error": mse_loss.detach(),
+            "infonce_loss": infonce_loss.detach(),
             "contrastive_active": True,
         }
 
@@ -236,12 +236,12 @@ class ContrFlowmatchingActionHead(nn.Module):
         pred = self.action_decoder(model_output)
         pred_actions = pred[:, -actions.shape[1]:]
 
-        # Loss: contrastive triplet (if enabled and labels provided) or standard MSE
+        # Loss: MSE + InfoNCE (if enabled and labels provided) or pure MSE
         if task_labels is not None and self.contrastive_weight > 0:
             loss_dict = self._compute_contrastive_loss(pred_actions, velocity, task_labels)
         else:
             mse = ((pred_actions - velocity) ** 2).mean()
-            loss_dict = {"loss": mse, "pos_error": mse, "neg_error": mse.new_tensor(0.0), "contrastive_active": False}
+            loss_dict = {"loss": mse, "pos_error": mse, "infonce_loss": mse.new_tensor(0.0), "contrastive_active": False}
 
         return loss_dict
 

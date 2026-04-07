@@ -375,7 +375,7 @@ class VLATrainer(TrainerUtils):
             "action_dit_loss": action_loss.item(),
             **({
                 "pos_error": output_dict["pos_error"].item(),
-                "neg_error": output_dict["neg_error"].item(),
+                "infonce_loss": output_dict["infonce_loss"].item(),
                 "contrastive_active": float(output_dict["contrastive_active"]),
             } if "pos_error" in output_dict else {}),
         }

@@ -32,7 +32,8 @@ framework:
     noise_s: 0.999
     num_timestep_buckets: 1000
     num_inference_timesteps: 4
-    contrastive_weight: 0.05  # triplet contrastive loss weight (0 = disabled, pure MSE)
+    contrastive_weight: 0.05  # InfoNCE loss weight (0 = disabled, pure MSE)
+    infonce_temperature: 0.1  # InfoNCE softmax temperature
     num_target_vision_tokens: 32
     diffusion_model_cfg:    # DiT Transformers 的参数
       cross_attention_dim: 2048 # VLM 的 dim
@@ -83,12 +84,12 @@ trainer:
   save_interval: 5000
   eval_interval: 100
   learning_rate:
-    base: 2.5e-05
-    qwen_vl_interface: 1.0e-05
-    action_model: 1.0e-04
+    base: 1.25e-05
+    qwen_vl_interface: 5.0e-06
+    action_model: 5.0e-05
   lr_scheduler_type: cosine_with_min_lr
   scheduler_specific_kwargs:
-    min_lr: 1.0e-06
+    min_lr: 5.0e-07
   freeze_modules: ''
   loss_scale:
     vla: 1.0

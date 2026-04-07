@@ -44,7 +44,7 @@ accelerate launch \
   --trainer.freeze_modules ${freeze_module_list} \
   --trainer.max_train_steps 50000 \
   --trainer.save_interval 10000 \
-  --trainer.logging_frequency 10 \
+  --trainer.logging_frequency 100 \
   --trainer.eval_interval 100 \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
