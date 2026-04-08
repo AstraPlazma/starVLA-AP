@@ -84,12 +84,12 @@ trainer:
   save_interval: 5000
   eval_interval: 100
   learning_rate:
-    base: 1.25e-05
-    qwen_vl_interface: 5.0e-06
-    action_model: 5.0e-05
+    base: 2.5e-05
+    qwen_vl_interface: 1.0e-05
+    action_model: 1.0e-04
   lr_scheduler_type: cosine_with_min_lr
   scheduler_specific_kwargs:
-    min_lr: 5.0e-07
+    min_lr: 1.0e-06
   freeze_modules: ''
   loss_scale:
     vla: 1.0
