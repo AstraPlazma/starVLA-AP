@@ -8,7 +8,7 @@ import random
 REPO_ID = "nvidia/PhysicalAI-Robotics-GR00T-X-Embodiment-Sim"
 REPO_TYPE = "dataset"
 
-LOCAL_DIR = "./playground/Datasets/nvidia/PhysicalAI-Robotics-GR00T-X-Embodiment-Sim"
+LOCAL_DIR = "../.playground/Datasets/nvidia/PhysicalAI-Robotics-GR00T-X-Embodiment-Sim"
 
 FOLDERS = [
     "gr1_unified.PnPBottleToCabinetClose_GR1ArmsAndWaistFourierHands_1000",

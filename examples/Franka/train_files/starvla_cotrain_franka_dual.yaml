@@ -9,7 +9,7 @@ is_debug: false
 framework:
   name: QwenGR00T
   qwenvl:
-    base_vlm: ./playground/Pretrained_models/Qwen2.5-VL-3B-Instruct
+    base_vlm: ../.playground/Pretrained_models/Qwen2.5-VL-3B-Instruct
     attn_implementation: flash_attention_2
     vl_hidden_dim: 2048
   dino:
@@ -61,7 +61,7 @@ datasets:
 
   vla_data:
     dataset_py: lerobot_datasets
-    data_root_dir: ./playground/Datasets
+    data_root_dir: ../.playground/Datasets
     data_mix: dual_franka_eef_joints
     action_type: delta_ee
     CoT_prompt: "Your task is {instruction}. To identify the key objects for your task. Locate their bounding boxes in [x1,y1,x2,y2] format."

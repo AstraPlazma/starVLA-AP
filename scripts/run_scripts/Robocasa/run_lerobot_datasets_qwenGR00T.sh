@@ -8,7 +8,7 @@ export NCCL_TIMEOUT=1000  # timeout set to 1 hour (unit: seconds)
 
 
 Framework_name=QwenGR00T
-base_vlm=./playground/Pretrained_models/Qwen3-VL-4B-Instruct
+base_vlm=../.playground/Pretrained_models/Qwen3-VL-4B-Instruct
 
 freeze_module_list='' # just for fast debug, sota is under fully FT, i.g., freeze_module_list=""
 DIT_TYPE="DiT-B"
@@ -16,12 +16,12 @@ DIT_TYPE="DiT-B"
 
 llavadata="asv2_conversation_en,asv2_detailed_description_en"
 # data_root_dir=/mnt/petrelfs/wangfangjing/p_ceph/datasets/PhysicalAI-Robotics-GR00T-X-Embodiment-Sim
-data_root_dir=./playground/Datasets/PhysicalAI-Robotics-GR00T-X-Embodiment-Sim
+data_root_dir=../.playground/Datasets/PhysicalAI-Robotics-GR00T-X-Embodiment-Sim
 data_mix=fourier_gr1_unified_1000
 # data_mix=fourier_gr1_unified_1000_PnPMilkToMicrowaveClose
 # data_mix=fourier_gr1_10K_pretrain
 
-run_root_dir=./playground/Checkpoints
+run_root_dir=../.playground/Checkpoints
 run_id=starvla_qwenGR00T_fourier_gr1_unified_1000_withState
 
 export WANDB_MODE=disabled

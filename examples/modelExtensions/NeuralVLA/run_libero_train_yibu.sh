@@ -10,7 +10,7 @@
 # export NCCL_TIMEOUT=1000  # 超时时间设为 1 小时（单位：秒）
 MODEL_PATH=/workspace/model/models--Qwen--Qwen2.5-VL-3B-Instruct/snapshots/66285546d2b821cf421d4f5eb2576359d3770cd3 # must be a local path, due to simpler will run in other
 data_root_dir=/workspace/dataset/libero_goal_no_noops_1.0.0_lerobot/datasets--IPEC-COMMUNITY--libero_goal_no_noops_1.0.0_lerobot/snapshots
-run_root_dir=./playground/Checkpoints
+run_root_dir=../.playground/Checkpoints
 run_id=1104_neurovla_gru_xiaonao_goal_dualimage_spike_multistep_ac8_768*2_yibu
 export WANDB_MODE=disabled
 
