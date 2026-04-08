@@ -274,7 +274,7 @@ if __name__ == "__main__":
     cfg = OmegaConf.load(args.config_yaml)
     cfg.framework.action_model.action_hidden_dim = 2048
 
-    cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Florence-2-large"
+    cfg.framework.qwenvl.base_vlm = "../.playground/Pretrained_models/Florence-2-large"
     
 
     # try get model

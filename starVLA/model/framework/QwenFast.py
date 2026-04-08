@@ -242,7 +242,7 @@ if __name__ == "__main__":
     debugpy.wait_for_client()
     args.config_yaml = "./examples/Robotwin/train_files/starvla_cotrain_robotwin.yaml"
     cfg = OmegaConf.load(args.config_yaml)
-    # cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
+    # cfg.framework.qwenvl.base_vlm = "../.playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action"
 
     # try get model
     model = Qwenvl_Fast(cfg)

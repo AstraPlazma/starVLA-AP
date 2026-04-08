@@ -386,7 +386,7 @@ if __name__ == "__main__":
     # try get model
     # cfg.framework.action_model.action_hidden_dim = 2048
 
-    # cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Florence-2-large"
+    # cfg.framework.qwenvl.base_vlm = "../.playground/Pretrained_models/Florence-2-large"
     
 
     model: QwenMem = QwenMem(cfg)
