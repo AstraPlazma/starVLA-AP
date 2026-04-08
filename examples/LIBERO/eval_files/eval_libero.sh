@@ -19,7 +19,7 @@ export PYOPENGL_PLATFORM=osmesa
 host="127.0.0.1"
 base_port=5699
 unnorm_key="franka"
-# your_ckpt=./playground/Pretrained_models/Qwen3.5-0.8B/model.safetensors-00001-of-00001.safetensors
+# your_ckpt=../.playground/Pretrained_models/Qwen3.5-0.8B/model.safetensors-00001-of-00001.safetensors
 your_ckpt=./results/Checkpoints/0402_libero4in1_qwen35gr00t/checkpoints/steps_20000_pytorch_model.pt
 
 # export DEBUG=true

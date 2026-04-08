@@ -33,7 +33,7 @@ echo "MASTER_ADDR=$MASTER_ADDR  MASTER_PORT=$MASTER_PORT"
 # -------------------- 你的原始配置 --------------------
 Framework_name=QwenOFT
 freeze_module_list=''
-base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct
+base_vlm=../.playground/Pretrained_models/Qwen3-VL-4B-Instruct
 config_yaml=./examples/Robotwin/train_files/starvla_cotrain_robotwin_abs.yaml
 run_root_dir=./results/Checkpoints
 data_mix=robotwin_all_50

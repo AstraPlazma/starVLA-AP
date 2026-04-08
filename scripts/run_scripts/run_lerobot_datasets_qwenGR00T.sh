@@ -30,9 +30,9 @@ Framework_name=QwenGR00T
 base_vlm=StarVLA/Qwen3-VL-4B-Instruct-Action
 action_input_dim=2560
 DIT_TYPE="DiT-B"
-oxe_data_root=playground/Datasets/OXE_LEROBOT
+oxe_data_root=../.playground/Datasets/OXE_LEROBOT
 data_mix=bridge_rt_1
-run_root_dir=./playground/Checkpoints
+run_root_dir=../.playground/Checkpoints
 run_id=1004_starvla_qwengroot_oxe
 
 

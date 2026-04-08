@@ -216,13 +216,13 @@ if __name__ == "__main__":
 
     cfg = OmegaConf.load(args.config_yaml)
     # try get model
-    # cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Qwen3-VL-4B-Instruct"
+    # cfg.framework.qwenvl.base_vlm = "../.playground/Pretrained_models/Qwen3-VL-4B-Instruct"
     # # cfg.framework.action_model.connect_layer_index = 16
     # cfg.framework.action_model.state_dim = 44
     # cfg.datasets.vla_data.include_state = True
 
     cfg.framework.action_model.action_hidden_dim = 2048
-    cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Florence-2-large"
+    cfg.framework.qwenvl.base_vlm = "../.playground/Pretrained_models/Florence-2-large"
     
     model: Qwen_Dual = Qwen_Dual(cfg)
     print(model)

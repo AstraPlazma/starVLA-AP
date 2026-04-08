@@ -10,7 +10,7 @@ is_debug: false
 framework:
   name: QwenGR00T
   qwenvl:
-    base_vlm: ./playground/Pretrained_models/Qwen3.5-0.8B
+    base_vlm: ../.playground/Pretrained_models/Qwen3.5-0.8B
     attn_implementation: flash_attention_2
     vl_hidden_dim: 2048
   dino:

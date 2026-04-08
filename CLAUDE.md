@@ -100,4 +100,4 @@ Checkpoint resumption: `trainer.pretrained_checkpoint` + `trainer.reload_modules
 
 ### Pretrained Models Location
 
-Place pretrained models under `./playground/Pretrained_models/`. For quick check, download [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct) to `./playground/Pretrained_models/Qwen3-VL-4B-Instruct`.
+Place pretrained models under `../.playground/Pretrained_models/`. For quick check, download [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct) to `../.playground/Pretrained_models/Qwen3-VL-4B-Instruct`.

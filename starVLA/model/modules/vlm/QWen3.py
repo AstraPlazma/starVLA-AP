@@ -186,6 +186,6 @@ if __name__ == "__main__":
 
     cfg = OmegaConf.load(args.config_yaml)
     
-    cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Qwen3-VL-4B-Instruct"
+    cfg.framework.qwenvl.base_vlm = "../.playground/Pretrained_models/Qwen3-VL-4B-Instruct"
     qwen_vl = _QWen3_VL_Interface(cfg)
     pass
