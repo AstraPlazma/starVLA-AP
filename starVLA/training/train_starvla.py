@@ -237,7 +237,10 @@ class VLATrainer(TrainerUtils):
         """Record training metrics."""
         if self.completed_steps % self.config.trainer.logging_frequency == 0 and dist.get_rank() == 0:
             metrics["learning_rate"] = self.lr_scheduler.get_last_lr()[0]
-            metrics["epoch"] = round(self.completed_steps / len(self.vla_train_dataloader), 2)
+            metrics["epoch"] = round(
+                self.completed_steps * self.accelerator.gradient_accumulation_steps
+                / len(self.vla_train_dataloader), 2
+            )
             wandb.log(metrics, step=self.completed_steps)
             logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
 
@@ -276,9 +279,12 @@ class VLATrainer(TrainerUtils):
             step_metrics = self._train_step(batch_vla)
             t_end_model = time.perf_counter()
 
-            if self.accelerator.sync_gradients:
-                progress_bar.update(1)
-                self.completed_steps += 1
+            if not self.accelerator.sync_gradients:
+                continue
+
+            progress_bar.update(1)
+            self.completed_steps += 1
+            self.lr_scheduler.step()  # Only step scheduler after actual weight update
 
             if self.accelerator.is_local_main_process:
                 progress_bar.set_postfix(
@@ -345,7 +351,7 @@ class VLATrainer(TrainerUtils):
                 self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
 
             self.optimizer.step()
-            self.lr_scheduler.step()
+            # NOTE: lr_scheduler.step() moved to train() loop, only called on gradient sync steps
 
         return {
             "action_dit_loss": action_loss.item(),

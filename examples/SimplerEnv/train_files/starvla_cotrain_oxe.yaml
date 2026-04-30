@@ -6,15 +6,25 @@ wandb_entity: your_wandb_entity
 wandb_project: llavavla
 is_debug: false
 
+
 framework:
-  name: QwenGR00T
+  name: QwenMem
   qwenvl:
-    base_vlm: ../.playground/Pretrained_models/Qwen2.5-VL-3B-Instruct
+    base_vlm: ../.playground/Pretrained_models/Qwen3.5-0.8B
     attn_implementation: flash_attention_2
     vl_hidden_dim: 2048
   dino:
     dino_backbone: dinov2_vits14
-
+  use_vggt: true   # Set true to enable VGGT 3D spatial fusion (requires vggt package + facebook/VGGT-1B weights)
+  memory:
+    per_token_size: 256
+    mem_length: 16
+    retrieval_layers: 2
+    use_timestep_pe: true
+    fusion_type: gate
+    consolidate_type: tome
+    update_fused: false
+    use_per_attn: true
   action_model:
     action_model_type: DiT-B
     hidden_size: 1024     # Matches the final DiT projection, used by the ActionDecoder
@@ -80,12 +90,12 @@ trainer:
   save_interval: 5000
   eval_interval: 100
   learning_rate:
-    base: 1e-05
-    qwen_vl_interface: 1.0e-05
-    action_model: 1.0e-04
+    base: 1e-06
+    qwen_vl_interface: 1.0e-06
+    action_model: 1.0e-05
   lr_scheduler_type: cosine_with_min_lr
   scheduler_specific_kwargs:
-    min_lr: 5.0e-07
+    min_lr: 5.0e-08
   freeze_modules: ''
   loss_scale:
     vla: 1.0

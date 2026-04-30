@@ -15,6 +15,7 @@ framework:
     vl_hidden_dim: 2048
   dino:
     dino_backbone: dinov2_vits14
+  use_vggt: true   # Set true to enable VGGT 3D spatial fusion (requires vggt package + facebook/VGGT-1B weights)
   memory:
     per_token_size: 256
     mem_length: 16
