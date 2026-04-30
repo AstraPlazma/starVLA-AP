@@ -38,7 +38,7 @@ import torch.nn as nn
 class _QWen3_5_VL_Interface(nn.Module):
     """
     This exists because of the diversity of VLMs, so we encapsulate the changes here.
-    Lightweight wrapper around Qwen3.5-VL (Qwen3_5ForConditionalGeneration).
+    Lightweight wrapper around Qwen3.5 (Qwen3_5ForConditionalGeneration).
 
     Purpose:
         - Unify interface with other VLM backends (CausalLM-like usage).
@@ -49,8 +49,8 @@ class _QWen3_5_VL_Interface(nn.Module):
 
     def __init__(self, config: Optional[dict] = None, **kwargs):
         """
-        Initialize the Qwen3.5-VL wrapper.
-        Following https://huggingface.co/Qwen/Qwen3.5-VL-4B-Instruct
+        Initialize the Qwen3.5 wrapper.
+        Following https://huggingface.co/Qwen/Qwen3.5-4B-Instruct
 
         """
         super().__init__()
@@ -82,7 +82,7 @@ class _QWen3_5_VL_Interface(nn.Module):
         **kwargs,
     ) -> CausalLMOutputWithPast:
         """
-        Forward pass delegating to underlying Qwen3.5-VL backbone.
+        Forward pass delegating to underlying Qwen3.5 backbone.
         """
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -113,7 +113,7 @@ class _QWen3_5_VL_Interface(nn.Module):
     def build_qwenvl_inputs(self, images, instructions, solutions=None, **kwargs):
         """
         Build model inputs from raw data (images + instructions + optional solutions).
-        Follow Oficial Qwen3.5-VL Instruct format: https://huggingface.co/Qwen/Qwen3.5-VL-4B-Instruct
+        Follow Oficial Qwen3.5 Instruct format: https://huggingface.co/Qwen/Qwen3.5-4B-Instruct
         """
 
         # Create messages: one message per sample
@@ -192,6 +192,6 @@ if __name__ == "__main__":
 
     cfg = OmegaConf.load(args.config_yaml)
     
-    cfg.framework.qwenvl.base_vlm = "../.playground/Pretrained_models/Qwen3.5-VL-4B-Instruct"
+    cfg.framework.qwenvl.base_vlm = "../.playground/Pretrained_models/Qwen3.5-4B-Instruct"
     qwen_vl = _QWen3_5_VL_Interface(cfg)
     pass

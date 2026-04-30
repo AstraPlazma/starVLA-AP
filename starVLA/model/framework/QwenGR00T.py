@@ -47,7 +47,7 @@ class Qwen_GR00T(baseframework):
     Multimodal vision-language-action model.
 
     Components:
-      - Qwen2.5 VL interface for fused language/vision token embeddings
+      - Qwen3.5 VL interface for fused language/vision token embeddings
       - Layer-wise QFormer for multi-layer feature aggregation
       - DINO encoder for dense multi-view spatial tokens
       - DiT diffusion head for future action sequence modeling
@@ -91,9 +91,9 @@ class Qwen_GR00T(baseframework):
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         actions = [example["action"] for example in examples]  # label [B, len, 7]
-        
+
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        
+
 
         # Step 1: QWenVL input format
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
@@ -119,7 +119,7 @@ class Qwen_GR00T(baseframework):
             )
             actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
             last_hidden_repeated = last_hidden.repeat(repeated_diffusion_steps, 1, 1)
-            
+
             state_repeated = None
             if state is not None:
                 state = torch.tensor(
